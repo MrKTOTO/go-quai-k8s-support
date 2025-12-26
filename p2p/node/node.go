@@ -142,7 +142,7 @@ func NewNode(ctx context.Context, quitCh chan struct{}) (*P2PNode, error) {
 			log.Global.Infof("public TCP address: %s", tcpAddr)
 		}
 		// For QUIC
-		if quicAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/udp/%s/quic-v1", publicIP, publicPort)); err == nil {
+		if quicAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/udp/%s/quic", publicIP, publicPort)); err == nil {
 			publicAddrs = append(publicAddrs, quicAddr)
 			log.Global.Infof("public QUIC address: %s", quicAddr)
 		}
@@ -175,7 +175,7 @@ func NewNode(ctx context.Context, quitCh chan struct{}) (*P2PNode, error) {
 		// pass the ip address and port to listen on
 		libp2p.ListenAddrStrings(
 			fmt.Sprintf("/ip4/0.0.0.0/tcp/%s", port),
-			fmt.Sprintf("/ip4/0.0.0.0/udp/%s/quic-v1", port),
+			fmt.Sprintf("/ip4/0.0.0.0/udp/%s/quic", port),
 		),
 
 		// REMOVED: libp2p.DefaultTransports (use explicit transports)
