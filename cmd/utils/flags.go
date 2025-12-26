@@ -256,7 +256,7 @@ var (
 	StaticPeersFlag = Flag{
 		Name:  c_NodeFlagPrefix + "staticpeers",
 		Value: []string{},
-		Usage: "list of static peers to dial and prefer for request/response. Syntax: <multiaddress1>,<multiaddress2>,... (must include /p2p/<peerID>). Unlike bootpeers, static peers are maintained and prioritized for block/header requests." + generateEnvDoc(c_NodeFlagPrefix+"staticpeers"),
+		Usage: "list of static peers to dial and prefer for request/response. Each multiaddr must include /p2p/<peerID>. Use spaces to separate multiple peers, or specify the flag multiple times. Unlike bootpeers, static peers are maintained and prioritized for block/header requests." + generateEnvDoc(c_NodeFlagPrefix+"staticpeers"),
 	}
 
 	StaticPeersOnlyFlag = Flag{
