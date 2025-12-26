@@ -1115,11 +1115,12 @@ func (s *PublicBlockChainQuaiAPI) CreateAccessList(ctx context.Context, args Tra
 
 // BlockTemplateRequest represents a getblocktemplate request
 type BlockTemplateRequest struct {
-	Rules       []string                `json:"rules,omitempty"`       // "kawpow", "sha", "scrypt"
-	ExtraNonce1 string                  `json:"extranonce1,omitempty"` // 4 byte hex string
-	ExtraNonce2 string                  `json:"extranonce2,omitempty"` // 8 byte hex string
-	ExtraData   string                  `json:"extradata,omitempty"`   // string less than 30 bytes
-	Coinbase    common.MixedcaseAddress `json:"coinbase,omitempty"`
+	Rules          []string                `json:"rules,omitempty"`          // "kawpow", "sha", "scrypt"
+	ExtraNonce1    string                  `json:"extranonce1,omitempty"`    // 4 byte hex string
+	ExtraNonce2    string                  `json:"extranonce2,omitempty"`    // 8 byte hex string
+	ExtraNonce2Len int                     `json:"extranonce2len,omitempty"` // extra nonce2 length in bytes
+	ExtraData      string                  `json:"extradata,omitempty"`      // string less than 30 bytes
+	Coinbase       common.MixedcaseAddress `json:"coinbase,omitempty"`
 }
 
 // GetBlockTemplate retrieves a new block template to mine
@@ -1210,7 +1211,10 @@ func (s *PublicBlockChainQuaiAPI) marshalAuxPowTemplate(wo *types.WorkObject, re
 
 	// extranonce1, extranonce2, and extradata are optional fields
 	var extraNonce1 [4]byte
-	var extraNonce2 [8]byte
+	extraNonce2 := make([]byte, 8)
+	if request != nil && request.ExtraNonce2Len == 4 {
+		extraNonce2 = make([]byte, 4)
+	}
 	var extraData [30]byte
 	if request != nil && len(request.ExtraNonce1) > 0 {
 		extraNonce1Bytes, err := hex.DecodeString(request.ExtraNonce1)
@@ -1240,6 +1244,10 @@ func (s *PublicBlockChainQuaiAPI) marshalAuxPowTemplate(wo *types.WorkObject, re
 		copy(extraData[:], extraDataBytes)
 		// update the first 30 bytes of the coinb2
 		copy(coinb2[:30], extraData[:])
+		// Add 4 bytes of padding if the requested extra nonce was only 4 bytes
+		if request.ExtraNonce2Len == 4 {
+			coinb2 = append([]byte{0, 0, 0, 0}, coinb2...)
+		}
 	}
 
 	// Build the updated transaction bytes by concatenating coinb1, extraNonce1, extraNonce2, and coinb2
@@ -1300,6 +1308,11 @@ func (s *PublicBlockChainQuaiAPI) marshalAuxPowTemplate(wo *types.WorkObject, re
 	woCopy.SetTime(0)
 	sealHashString := hex.EncodeToString(wo.SealHash().Bytes()[:6])
 
+	extraNonce2Length := 8
+	if request != nil && request.ExtraNonce2Len == 4 {
+		extraNonce2Length = 4
+	}
+
 	return map[string]interface{}{
 		"version":           auxHeader.Version(),
 		"previousblockhash": prevBlockHex,
@@ -1313,8 +1326,8 @@ func (s *PublicBlockChainQuaiAPI) marshalAuxPowTemplate(wo *types.WorkObject, re
 		"bits":              bitsHex,
 		"height":            uint64(blockHeight),
 		"coinb1":            hex.EncodeToString(coinb1),
-		"extranonce1Length": 4, // 4 bytes
-		"extranonce2Length": 8, // 8 bytes
+		"extranonce1Length": 4,                 // 4 bytes
+		"extranonce2Length": extraNonce2Length, // 8 bytes
 		// Keep the 30-byte aux extra data inside coinb2; miners do not fill it
 		"coinbaseAuxExtraBytesLength": 30, // 32 bytes
 		"coinb2":                      hex.EncodeToString(coinb2),
@@ -2191,6 +2204,26 @@ func (s *PublicBlockChainQuaiAPI) GetQuaiHeaderForDonorHash(ctx context.Context,
 		return nil, errors.New("no quai header found for donor hash")
 	}
 	return header.RPCMarshalWorkObjectHeader("v2"), nil
+}
+
+func (s *PublicBlockChainQuaiAPI) GetCoinbaseTxForWorkShareHash(ctx context.Context, workShareHash common.Hash) (*RPCTransaction, error) {
+	block := s.b.GetBlockForWorkShareHash(workShareHash)
+	// go through the block and find the tx hash that has the workshare hash in the data
+	if block == nil {
+		return nil, errors.New("no block found for workshare hash")
+	}
+	for index, tx := range block.Transactions() {
+		if tx.Type() == types.ExternalTxType && tx.EtxType() == types.CoinbaseType {
+			if len(tx.Data()) < common.HashLength {
+				continue
+			}
+			shareHash := common.BytesToHash(tx.Data()[len(tx.Data())-common.HashLength:])
+			if shareHash == workShareHash {
+				return newRPCTransaction(tx, block.Hash(), block.NumberU64(s.b.NodeCtx()), uint64(index), block.BaseFee(), s.b.NodeLocation()), nil
+			}
+		}
+	}
+	return nil, errors.New("no coinbase transaction found for workshare hash")
 }
 
 func (s *PublicBlockChainQuaiAPI) GetSubsidyChainHeight(ctx context.Context) (map[string]interface{}, error) {
