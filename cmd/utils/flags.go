@@ -73,6 +73,9 @@ var GlobalFlags = []Flag{
 var NodeFlags = []Flag{
 	IPAddrFlag,
 	P2PPortFlag,
+	PublicIPFlag,
+	PublicPortFlag,
+	KubernetesFlag,
 	BootPeersFlag,
 	PortMapFlag,
 	KeyFileFlag,
@@ -242,6 +245,26 @@ var (
 		Abbreviation: "p",
 		Value:        "4002",
 		Usage:        "p2p port to listen on" + generateEnvDoc(c_NodeFlagPrefix+"port"),
+	}
+
+	PublicIPFlag = Flag{
+		Name:         c_NodeFlagPrefix + "publicip",
+		Abbreviation: "i",
+		Value:        "",
+		Usage:        "public ip address for other peers" + generateEnvDoc(c_NodeFlagPrefix+"publicip"),
+	}
+
+	PublicPortFlag = Flag{
+		Name:         c_NodeFlagPrefix + "publicport",
+		Abbreviation: "p",
+		Value:        "",
+		Usage:        "public p2p port to listen on" + generateEnvDoc(c_NodeFlagPrefix+"publicport"),
+	}
+
+	KubernetesFlag = Flag{
+		Name:  c_NodeFlagPrefix + "kubernetes",
+		Value: false,
+		Usage: "enable k8s mode" + generateEnvDoc(c_NodeFlagPrefix+"kubernetes"),
 	}
 
 	BootPeersFlag = Flag{
