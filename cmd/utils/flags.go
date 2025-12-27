@@ -252,14 +252,14 @@ var (
 
 	PublicIPFlag = Flag{
 		Name:         c_NodeFlagPrefix + "publicip",
-		Abbreviation: "pi",
+		Abbreviation: "i",
 		Value:        "",
 		Usage:        "public ip address for other peers" + generateEnvDoc(c_NodeFlagPrefix+"publicip"),
 	}
 
 	PublicPortFlag = Flag{
 		Name:         c_NodeFlagPrefix + "publicport",
-		Abbreviation: "pp",
+		Abbreviation: "p",
 		Value:        "",
 		Usage:        "public p2p port to listen on" + generateEnvDoc(c_NodeFlagPrefix+"publicport"),
 	}
