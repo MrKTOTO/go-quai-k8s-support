@@ -72,6 +72,7 @@ var GlobalFlags = []Flag{
 
 var NodeFlags = []Flag{
 	IPAddrFlag,
+	ExternalIPFlag,
 	P2PPortFlag,
 	BootPeersFlag,
 	StaticPeersFlag,
@@ -240,6 +241,12 @@ var (
 		Usage:        "ip address to listen on" + generateEnvDoc(c_NodeFlagPrefix+"ipaddr"),
 	}
 
+	ExternalIPFlag = Flag{
+		Name:  c_NodeFlagPrefix + "external-ip",
+		Value: "",
+		Usage: "external IP address to announce to peers (useful when behind NAT without UPnP, or when port is manually forwarded)" + generateEnvDoc(c_NodeFlagPrefix+"external-ip"),
+	}
+
 	P2PPortFlag = Flag{
 		Name:         c_NodeFlagPrefix + "port",
 		Abbreviation: "p",
@@ -256,7 +263,7 @@ var (
 	StaticPeersFlag = Flag{
 		Name:  c_NodeFlagPrefix + "staticpeers",
 		Value: []string{},
-		Usage: "list of static peers to dial and prefer for request/response. Syntax: <multiaddress1>,<multiaddress2>,... (must include /p2p/<peerID>). Unlike bootpeers, static peers are maintained and prioritized for block/header requests." + generateEnvDoc(c_NodeFlagPrefix+"staticpeers"),
+		Usage: "list of static peers to dial and prefer for request/response. Each multiaddr must include /p2p/<peerID>. Use spaces to separate multiple peers, or specify the flag multiple times. Unlike bootpeers, static peers are maintained and prioritized for block/header requests." + generateEnvDoc(c_NodeFlagPrefix+"staticpeers"),
 	}
 
 	StaticPeersOnlyFlag = Flag{
