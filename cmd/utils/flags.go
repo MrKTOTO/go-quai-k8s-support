@@ -248,17 +248,15 @@ var (
 	}
 
 	PublicIPFlag = Flag{
-		Name:         c_NodeFlagPrefix + "publicip",
-		Abbreviation: "pi",
-		Value:        "",
-		Usage:        "public ip address for other peers" + generateEnvDoc(c_NodeFlagPrefix+"publicip"),
+		Name:  c_NodeFlagPrefix + "publicip",
+		Value: "",
+		Usage: "public ip address for other peers" + generateEnvDoc(c_NodeFlagPrefix+"publicip"),
 	}
 
 	PublicPortFlag = Flag{
-		Name:         c_NodeFlagPrefix + "publicport",
-		Abbreviation: "pp",
-		Value:        "",
-		Usage:        "public p2p port to listen on" + generateEnvDoc(c_NodeFlagPrefix+"publicport"),
+		Name:  c_NodeFlagPrefix + "publicport",
+		Value: "",
+		Usage: "public p2p port to listen on" + generateEnvDoc(c_NodeFlagPrefix+"publicport"),
 	}
 
 	KubernetesFlag = Flag{
