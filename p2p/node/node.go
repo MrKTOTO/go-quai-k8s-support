@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/libp2p/go-libp2p"
 	kaddht "github.com/libp2p/go-libp2p-kad-dht"
@@ -440,6 +441,12 @@ func parsePeerAddrInfos(rawPeers []string) ([]peer.AddrInfo, error) {
 	infos := make([]peer.AddrInfo, 0, len(rawPeers))
 	for _, raw := range rawPeers {
 		raw = strings.TrimSpace(raw)
+		raw = strings.Map(func(r rune) rune {
+			if unicode.IsSpace(r) {
+				return -1
+			}
+			return r
+		}, raw)
 		if raw == "" {
 			continue
 		}
