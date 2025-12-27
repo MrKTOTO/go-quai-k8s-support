@@ -106,15 +106,6 @@ func NewNode(ctx context.Context, quitCh chan struct{}) (*P2PNode, error) {
 	}
 	staticPeersOnly := viper.GetBool(utils.StaticPeersOnlyFlag.Name)
 
-	// Static peers are explicit dial targets (multiaddrs including /p2p/<peerID>).
-	// They are distinct from bootpeers (which are mainly used for DHT bootstrap
-	// and as static relays for AutoRelay).
-	staticPeers, err := parsePeerAddrInfos(viper.GetStringSlice(utils.StaticPeersFlag.Name))
-	if err != nil {
-		return nil, err
-	}
-	staticPeersOnly := viper.GetBool(utils.StaticPeersOnlyFlag.Name)
-
 	// Peer manager handles both connection management and connection gating
 	peerMgr, err := peerManager.NewManager(
 		ctx,
