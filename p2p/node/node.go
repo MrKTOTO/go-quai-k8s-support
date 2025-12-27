@@ -3,8 +3,6 @@ package node
 import (
 	"context"
 	"fmt"
-	quic2 "github.com/libp2p/go-libp2p/p2p/transport/quic"
-	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	"reflect"
 	"strings"
 	"time"
@@ -90,9 +88,6 @@ type P2PNode struct {
 	// If true, request/response will only target static peers (when configured).
 	// Pubsub remains enabled; this only affects direct request/response selection.
 	staticPeersOnly bool
-
-	// Added a field for public addresses
-	publicAddrs []multiaddr.Multiaddr
 }
 
 // Returns a new libp2p node.
@@ -100,18 +95,6 @@ type P2PNode struct {
 func NewNode(ctx context.Context, quitCh chan struct{}) (*P2PNode, error) {
 	ipAddr := viper.GetString(utils.IPAddrFlag.Name)
 	port := viper.GetString(utils.P2PPortFlag.Name)
-
-	// We get a public address for announcement to other peers
-	publicIP := viper.GetString(utils.PublicIPFlag.Name)
-	publicPort := viper.GetString(utils.PublicPortFlag.Name)
-
-	// If public addresses are not specified, we use default
-	if publicIP == "" {
-		publicIP = ipAddr
-	}
-	if publicPort == "" {
-		publicPort = port
-	}
 
 	// Static peers are explicit dial targets (multiaddrs including /p2p/<peerID>).
 	// They are distinct from bootpeers (which are mainly used for DHT bootstrap
@@ -154,36 +137,6 @@ func NewNode(ctx context.Context, quitCh chan struct{}) (*P2PNode, error) {
 
 	peerKey := getNodeKey()
 	var dht *kaddht.IpfsDHT
-
-	// Create a public multiaddr for the announcement
-	var publicAddrs []multiaddr.Multiaddr
-	if publicIP != "" && publicPort != "" {
-		// For TCP
-		if tcpAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%s", publicIP, publicPort)); err == nil {
-			publicAddrs = append(publicAddrs, tcpAddr)
-			log.Global.Infof("public TCP address: %s", tcpAddr)
-		}
-		// For QUIC
-		if quicAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/udp/%s/quic-v1", publicIP, publicPort)); err == nil {
-			publicAddrs = append(publicAddrs, quicAddr)
-			log.Global.Infof("public QUIC address: %s", quicAddr)
-		}
-	}
-
-	// Function for announcing public addresses
-	addrsFactory := func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
-		// In Kubernetes we need to declare a public address, not private ones
-		if len(publicAddrs) > 0 {
-			// We filter local addresses, leaving only public ones
-			var filtered []multiaddr.Multiaddr
-			for _, addr := range publicAddrs {
-				filtered = append(filtered, addr)
-			}
-			return filtered
-		}
-		return addrs
-	}
-
 	host, err := libp2p.New(
 		// Pass in the resource manager
 		libp2p.ResourceManager(rmgr),
@@ -196,40 +149,29 @@ func NewNode(ctx context.Context, quitCh chan struct{}) (*P2PNode, error) {
 
 		// pass the ip address and port to listen on
 		libp2p.ListenAddrStrings(
-			fmt.Sprintf("/ip4/0.0.0.0/tcp/%s", port),
-			fmt.Sprintf("/ip4/0.0.0.0/udp/%s/quic-v1", port),
+			fmt.Sprintf("/ip4/%s/tcp/%s", ipAddr, port),
 		),
 
-		// REMOVED: libp2p.DefaultTransports (use explicit transports)
-		// libp2p.DefaultTransports,
-
-		// explicit transports
-		libp2p.Transport(tcp.NewTCPTransport),
-		libp2p.Transport(quic2.NewTransport),
+		// support all transports
+		libp2p.DefaultTransports,
 
 		// support Noise connections
 		libp2p.Security(noise.ID, noise.New),
 
 		// Optionally attempt to configure network port mapping with UPnP
-		// UPnP doesn't work in Kubernetes, so we'll remove NATPortMap
 		func() libp2p.Option {
-			if viper.GetBool(utils.PortMapFlag.Name) && !viper.GetBool(utils.KubernetesFlag.Name) {
+			if viper.GetBool(utils.PortMapFlag.Name) {
 				return libp2p.NATPortMap()
+			} else {
+				return nil
 			}
-			return nil
 		}(),
 
-		// EnableNATService only for non-Kubernetes mode
-		func() libp2p.Option {
-			if !viper.GetBool(utils.KubernetesFlag.Name) {
-				return libp2p.EnableNATService()
-			}
-			return nil
-		}(),
+		// Enable NAT detection service
+		libp2p.EnableNATService(),
 
 		// If publicly reachable, provide a relay service for other peers
-		//libp2p.EnableRelayService(),
-		libp2p.EnableRelay(),
+		libp2p.EnableRelayService(),
 
 		// If behind NAT, automatically advertise relay address through relay peers
 		// TODO: today the bootnodes act as static relays. In the future we should dynamically select relays from publicly reachable peers.
@@ -238,12 +180,6 @@ func NewNode(ctx context.Context, quitCh chan struct{}) (*P2PNode, error) {
 		// Attempt to open a direct connection with relayed peers, using relay
 		// nodes to coordinate the holepunch.
 		libp2p.EnableHolePunching(),
-
-		// We explicitly indicate that the node is behind NAT
-		libp2p.ForceReachabilityPrivate(),
-
-		// Using an address factory to declare a public address
-		libp2p.AddrsFactory(addrsFactory),
 
 		// Connection manager will tag and prioritize peers
 		libp2p.ConnectionManager(peerMgr),
@@ -267,16 +203,6 @@ func NewNode(ctx context.Context, quitCh chan struct{}) (*P2PNode, error) {
 	if err != nil {
 		log.Global.Fatalf("error creating libp2p host: %s", err)
 		return nil, err
-	}
-
-	// We log all host addresses
-	log.Global.Info("host listening addresses:")
-	for _, addr := range host.Addrs() {
-		log.Global.Infof("  %s", addr)
-	}
-	log.Global.Info("host public addresses (announced):")
-	for _, addr := range publicAddrs {
-		log.Global.Infof("  %s/p2p/%s", addr, host.ID())
 	}
 
 	idOpts := []identify.Option{
@@ -306,7 +232,7 @@ func NewNode(ctx context.Context, quitCh chan struct{}) (*P2PNode, error) {
 	// Bootstrapping the DHT (this step is essential for peer discovery)
 	if err := dht.Bootstrap(ctx); err != nil {
 		log.Global.Info("Failed to bootstrap DHT:", err)
-		// return nil, err
+		return nil, err
 	}
 
 	// Create a gossipsub instance with helper functions
@@ -329,7 +255,6 @@ func NewNode(ctx context.Context, quitCh chan struct{}) (*P2PNode, error) {
 		bandwidthCounter: bwctr,
 		staticPeers:      staticPeers,
 		staticPeersOnly:  staticPeersOnly,
-		publicAddrs:      publicAddrs,
 	}
 
 	sm, err := streamManager.NewStreamManager(p2p, host)
@@ -340,51 +265,7 @@ func NewNode(ctx context.Context, quitCh chan struct{}) (*P2PNode, error) {
 
 	p2p.peerManager.SetStreamManager(sm)
 
-	// Run periodic connection checks in Kubernetes
-	if viper.GetBool(utils.KubernetesFlag.Name) {
-		go p2p.monitorConnections()
-	}
-
 	return p2p, nil
-}
-
-// Connection Monitoring for Kubernetes
-func (p *P2PNode) monitorConnections() {
-	ticker := time.NewTicker(2 * time.Minute)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			connected := p.host.Network().Peers()
-			log.Global.Infof("connection status: %d peers connected", len(connected))
-
-			// If there are no connections, try reconnecting to bootpeers
-			if len(connected) == 0 {
-				log.Global.Warn("no peers connected, attempting to reconnect to bootpeers")
-				go func() {
-					if err := p.dht.Bootstrap(p.ctx); err != nil {
-						log.Global.Warn("failed to re-bootstrap DHT:", err)
-					}
-				}()
-			}
-
-			// Logging information about connected peers
-			for _, peerID := range connected {
-				conns := p.host.Network().ConnsToPeer(peerID)
-				log.Global.Debugf("peer %s: %d connections", peerID, len(conns))
-			}
-		case <-p.ctx.Done():
-			return
-		}
-	}
-}
-
-func (p *P2PNode) GetPublicAddrs() []multiaddr.Multiaddr {
-	if len(p.publicAddrs) > 0 {
-		return p.publicAddrs
-	}
-	return p.host.Addrs()
 }
 
 // Close performs cleanup of resources used by P2PNode
