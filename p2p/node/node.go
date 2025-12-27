@@ -174,12 +174,7 @@ func NewNode(ctx context.Context, quitCh chan struct{}) (*P2PNode, error) {
 	addrsFactory := func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
 		// In Kubernetes we need to declare a public address, not private ones
 		if len(publicAddrs) > 0 {
-			// We filter local addresses, leaving only public ones
-			var filtered []multiaddr.Multiaddr
-			for _, addr := range publicAddrs {
-				filtered = append(filtered, addr)
-			}
-			return filtered
+			return append(addrs, publicAddrs...)
 		}
 		return addrs
 	}
