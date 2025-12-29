@@ -198,6 +198,7 @@ func (api *PublicFilterAPI) NewPendingTransactions(ctx context.Context) (*rpc.Su
 		api.activeSubscriptions += 1
 		txHashes := make(chan []common.Hash, 128)
 		pendingTxSub := api.events.SubscribePendingTxs(txHashes)
+		defer pendingTxSub.Unsubscribe()
 
 		for {
 			select {
@@ -208,10 +209,8 @@ func (api *PublicFilterAPI) NewPendingTransactions(ctx context.Context) (*rpc.Su
 					notifier.Notify(rpcSub.ID, h)
 				}
 			case <-rpcSub.Err():
-				pendingTxSub.Unsubscribe()
 				return
 			case <-notifier.Closed():
-				pendingTxSub.Unsubscribe()
 				return
 			}
 		}
@@ -289,6 +288,7 @@ func (api *PublicFilterAPI) NewWorkshares(ctx context.Context) (*rpc.Subscriptio
 		api.activeSubscriptions += 1
 		workshares := make(chan *types.WorkObject, 100) // Buffer to prevent blocking
 		worksharesSub := api.events.SubscribeNewWorkshares(workshares)
+		defer worksharesSub.Unsubscribe()
 		api.backend.Logger().Info("NewWorkshares subscription created")
 		for {
 			select {
@@ -335,10 +335,8 @@ func (api *PublicFilterAPI) NewWorkshares(ctx context.Context) (*rpc.Subscriptio
 
 				notifier.Notify(rpcSub.ID, w.RPCMarshalWorkObject(api.backend.RpcVersion()))
 			case <-rpcSub.Err():
-				worksharesSub.Unsubscribe()
 				return
 			case <-notifier.Closed():
-				worksharesSub.Unsubscribe()
 				return
 			}
 		}
@@ -373,6 +371,7 @@ func (api *PublicFilterAPI) NewWorksharesV2(ctx context.Context) (*rpc.Subscript
 		api.activeSubscriptions += 1
 		workshares := make(chan *types.WorkObject, 100) // Buffer to prevent blocking
 		worksharesSub := api.events.SubscribeNewWorkshares(workshares)
+		defer worksharesSub.Unsubscribe()
 		api.backend.Logger().Info("NewWorkshares subscription created")
 		for {
 			select {
@@ -419,10 +418,8 @@ func (api *PublicFilterAPI) NewWorksharesV2(ctx context.Context) (*rpc.Subscript
 
 				notifier.Notify(rpcSub.ID, w.RPCMarshalWorkObject("v2"))
 			case <-rpcSub.Err():
-				worksharesSub.Unsubscribe()
 				return
 			case <-notifier.Closed():
-				worksharesSub.Unsubscribe()
 				return
 			}
 		}
@@ -457,6 +454,7 @@ func (api *PublicFilterAPI) NewHeadsV2(ctx context.Context) (*rpc.Subscription, 
 		api.activeSubscriptions += 1
 		headers := make(chan *types.WorkObject, 10) // Buffer to prevent blocking
 		headersSub := api.events.SubscribeNewHeads(headers)
+		defer headersSub.Unsubscribe()
 
 		for {
 			select {
@@ -465,10 +463,8 @@ func (api *PublicFilterAPI) NewHeadsV2(ctx context.Context) (*rpc.Subscription, 
 				marshalHeader := h.RPCMarshalWorkObject("v2")
 				notifier.Notify(rpcSub.ID, marshalHeader)
 			case <-rpcSub.Err():
-				headersSub.Unsubscribe()
 				return
 			case <-notifier.Closed():
-				headersSub.Unsubscribe()
 				return
 			}
 		}
@@ -503,6 +499,7 @@ func (api *PublicFilterAPI) NewHeads(ctx context.Context) (*rpc.Subscription, er
 		api.activeSubscriptions += 1
 		headers := make(chan *types.WorkObject, 10) // Buffer to prevent blocking
 		headersSub := api.events.SubscribeNewHeads(headers)
+		defer headersSub.Unsubscribe()
 
 		for {
 			select {
@@ -511,10 +508,8 @@ func (api *PublicFilterAPI) NewHeads(ctx context.Context) (*rpc.Subscription, er
 				marshalHeader := h.RPCMarshalWorkObject(api.backend.RpcVersion())
 				notifier.Notify(rpcSub.ID, marshalHeader)
 			case <-rpcSub.Err():
-				headersSub.Unsubscribe()
 				return
 			case <-notifier.Closed():
-				headersSub.Unsubscribe()
 				return
 			}
 		}
@@ -648,6 +643,7 @@ func (api *PublicFilterAPI) Logs(ctx context.Context, crit FilterCriteria) (*rpc
 			}
 			api.activeSubscriptions -= 1
 		}()
+		defer logsSub.Unsubscribe()
 		api.activeSubscriptions += 1
 		for {
 			select {
@@ -656,10 +652,8 @@ func (api *PublicFilterAPI) Logs(ctx context.Context, crit FilterCriteria) (*rpc
 					notifier.Notify(rpcSub.ID, &log)
 				}
 			case <-rpcSub.Err(): // client send an unsubscribe request
-				logsSub.Unsubscribe()
 				return
 			case <-notifier.Closed(): // connection dropped
-				logsSub.Unsubscribe()
 				return
 			}
 		}
@@ -1021,6 +1015,7 @@ func (api *PublicFilterAPI) PendingHeader(ctx context.Context) (*rpc.Subscriptio
 		}()
 		header := make(chan *types.WorkObject, c_pendingHeaderChSize)
 		headerSub := api.backend.SubscribePendingHeaderEvent(header)
+		defer headerSub.Unsubscribe()
 
 		for {
 			select {
@@ -1052,10 +1047,8 @@ func (api *PublicFilterAPI) PendingHeader(ctx context.Context) (*rpc.Subscriptio
 					notifier.Notify(rpcSub.ID, data)
 				}()
 			case <-rpcSub.Err():
-				headerSub.Unsubscribe()
 				return
 			case <-notifier.Closed():
-				headerSub.Unsubscribe()
 				return
 			}
 		}
