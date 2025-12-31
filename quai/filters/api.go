@@ -1117,9 +1117,9 @@ func (api *PublicFilterAPI) BlockTemplateUpdates(ctx context.Context, crit Block
 		api.activeSubscriptions += 1
 
 		var lastState *templateState
-		heartbeatTicker := time.NewTicker(5 * time.Second)
+		heartbeatTicker := time.NewTicker(15 * time.Second)
 		defer heartbeatTicker.Stop()
-		changingTicker := time.NewTicker(1 * time.Second)
+		changingTicker := time.NewTicker(500 * time.Millisecond)
 		defer changingTicker.Stop()
 
 		pendingHeaders := make(chan *types.WorkObject, c_pendingHeaderChSize)
@@ -1168,7 +1168,7 @@ func (api *PublicFilterAPI) BlockTemplateUpdates(ctx context.Context, crit Block
 				}
 				notifier.Notify(rpcSub.ID, template)
 				lastState = newState
-				heartbeatTicker.Reset(5 * time.Second)
+				heartbeatTicker.Reset(15 * time.Second)
 			}
 		}
 
