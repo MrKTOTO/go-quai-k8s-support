@@ -115,6 +115,12 @@ func (ec *Client) SubscribeNewHeadV2(ctx context.Context, ch chan<- *types.WorkO
 	return ec.c.QuaiSubscribe(ctx, ch, "newHeadsV2")
 }
 
+// SubscribeNewHead subscribes to notifications about the current blockTemplateUpdates
+// on the given channel.
+func (ec *Client) SubscribeBlockTemplateUpdates(ctx context.Context, ch chan<- *types.WorkObject) (quai.Subscription, error) {
+	return ec.c.QuaiSubscribe(ctx, ch, "blockTemplateUpdates")
+}
+
 func (ec *Client) HeaderByHash(ctx context.Context, hash common.Hash) *types.Header {
 	var raw json.RawMessage
 	ec.c.CallContext(ctx, &raw, "quai_getHeaderByHash", hash)
