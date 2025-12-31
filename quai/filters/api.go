@@ -1119,7 +1119,7 @@ func (api *PublicFilterAPI) BlockTemplateUpdates(ctx context.Context, crit Block
 		var lastState *templateState
 		heartbeatTicker := time.NewTicker(5 * time.Second)
 		defer heartbeatTicker.Stop()
-		changingTicker := time.NewTicker(500 * time.Millisecond)
+		changingTicker := time.NewTicker(1 * time.Second)
 		defer changingTicker.Stop()
 
 		pendingHeaders := make(chan *types.WorkObject, c_pendingHeaderChSize)
@@ -1149,15 +1149,14 @@ func (api *PublicFilterAPI) BlockTemplateUpdates(ctx context.Context, crit Block
 				quaiHeight: pending.WorkObjectHeader().NumberU64(),
 			}
 
-			var changed bool
+			changed := false
 			if lastState == nil {
 				changed = true // First template
 			} else if lastState.parentHash != newState.parentHash {
 				changed = true // New block
 			} else if lastState.quaiHeight != newState.quaiHeight {
 				changed = true // QuaiHeight changed
-				//} else if powID == types.Kawpow && lastState.sealHash != newState.sealHash {
-			} else if lastState.sealHash != newState.sealHash {
+			} else if powID == types.Kawpow && lastState.sealHash != newState.sealHash {
 				changed = true // Kawpow: sealHash changed (epoch change)
 			}
 
