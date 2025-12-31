@@ -1119,7 +1119,7 @@ func (api *PublicFilterAPI) BlockTemplateUpdates(ctx context.Context, crit Block
 		var lastState *templateState
 		heartbeatTicker := time.NewTicker(5 * time.Second)
 		defer heartbeatTicker.Stop()
-		changingTicker := time.NewTicker(1 * time.Second)
+		changingTicker := time.NewTicker(500 * time.Millisecond)
 		defer changingTicker.Stop()
 
 		pendingHeaders := make(chan *types.WorkObject, c_pendingHeaderChSize)
