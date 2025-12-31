@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"math/big"
 	"runtime/debug"
-	"strings"
 	"sync"
 	"time"
 
@@ -34,7 +33,6 @@ import (
 	"github.com/dominant-strategies/go-quai/core/types"
 	"github.com/dominant-strategies/go-quai/ethdb"
 	"github.com/dominant-strategies/go-quai/event"
-	"github.com/dominant-strategies/go-quai/internal/quaiapi"
 	"github.com/dominant-strategies/go-quai/log"
 	"github.com/dominant-strategies/go-quai/rpc"
 	"google.golang.org/protobuf/proto"
@@ -1056,140 +1054,6 @@ func (api *PublicFilterAPI) PendingHeader(ctx context.Context) (*rpc.Subscriptio
 				return
 			case <-notifier.Closed():
 				headerSub.Unsubscribe()
-				return
-			}
-		}
-	}()
-
-	return rpcSub, nil
-}
-
-// BlockTemplateUpdatesCriteria specifies parameters for block template subscription
-type BlockTemplateUpdatesCriteria struct {
-	Algorithm string `json:"algorithm"` // "kawpow", "sha", "scrypt"
-}
-
-// templateState tracks template changes for update detection
-type templateState struct {
-	sealHash   common.Hash
-	parentHash common.Hash
-	height     uint64
-	quaiHeight uint64
-}
-
-// parsePowID converts algorithm string to types.PowID
-func parsePowID(algorithm string) (types.PowID, error) {
-	switch strings.ToLower(algorithm) {
-	case "kawpow":
-		return types.Kawpow, nil
-	case "sha", "sha256", "sha_bch":
-		return types.SHA_BCH, nil
-	case "scrypt":
-		return types.Scrypt, nil
-	default:
-		return 0, fmt.Errorf("unsupported algorithm: %s", algorithm)
-	}
-}
-
-// BlockTemplateUpdates sends a notification when the block template changes.
-// Triggers: quaiHeight change, prevHash change, sealHash change (kawpow only)
-// Heartbeat: sends current template every 5 seconds if no change occurred
-func (api *PublicFilterAPI) BlockTemplateUpdates(ctx context.Context, crit BlockTemplateUpdatesCriteria) (*rpc.Subscription, error) {
-	if api.activeSubscriptions >= api.subscriptionLimit {
-		return &rpc.Subscription{}, errors.New("too many subscribers")
-	}
-
-	notifier, supported := rpc.NotifierFromContext(ctx)
-	if !supported {
-		return &rpc.Subscription{}, rpc.ErrNotificationsUnsupported
-	}
-
-	powID, err := parsePowID(crit.Algorithm)
-	if err != nil {
-		return &rpc.Subscription{}, err
-	}
-
-	rpcSub := notifier.CreateSubscription()
-
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				api.backend.Logger().WithFields(log.Fields{
-					"error":      r,
-					"stacktrace": string(debug.Stack()),
-				}).Error("Go-Quai Panicked")
-			}
-			api.activeSubscriptions -= 1
-		}()
-		api.activeSubscriptions += 1
-
-		var lastState *templateState
-		heartbeatTicker := time.NewTicker(5 * time.Second)
-		defer heartbeatTicker.Stop()
-
-		pendingHeaders := make(chan *types.WorkObject, c_pendingHeaderChSize)
-		pendingHeaderSub := api.backend.SubscribePendingHeaderEvent(pendingHeaders)
-		defer pendingHeaderSub.Unsubscribe()
-
-		// Helper to get template and check for changes
-		checkAndSendTemplate := func(forceUpdate bool) {
-			pending, err := api.backend.GetPendingHeader(powID, common.Address{})
-			if err != nil {
-				api.backend.Logger().WithField("err", err).Debug("Failed to get pending header for template subscription")
-				return
-			}
-			if pending == nil {
-				return
-			}
-
-			auxPow := pending.AuxPow()
-			if auxPow == nil || auxPow.Header() == nil {
-				return
-			}
-
-			newState := &templateState{
-				sealHash:   pending.SealHash(),
-				parentHash: auxPow.Header().PrevBlock(),
-				height:     pending.NumberU64(common.ZONE_CTX),
-				quaiHeight: pending.WorkObjectHeader().NumberU64(),
-			}
-
-			var changed bool
-			if lastState == nil {
-				changed = true // First template
-			} else if lastState.parentHash != newState.parentHash {
-				changed = true // New block
-			} else if lastState.quaiHeight != newState.quaiHeight {
-				changed = true // QuaiHeight changed
-			} else if powID == types.Kawpow && lastState.sealHash != newState.sealHash {
-				changed = true // Kawpow: sealHash changed (epoch change)
-			}
-
-			if changed || forceUpdate {
-				template, err := quaiapi.MarshalAuxPowTemplate(pending, powID, "", "", "")
-				if err != nil {
-					api.backend.Logger().WithField("err", err).Debug("Failed to marshal block template")
-					return
-				}
-				notifier.Notify(rpcSub.ID, template)
-				lastState = newState
-				heartbeatTicker.Reset(5 * time.Second)
-			}
-		}
-
-		// Send initial template immediately
-		checkAndSendTemplate(true)
-
-		for {
-			select {
-			case <-pendingHeaders:
-				checkAndSendTemplate(false)
-			case <-heartbeatTicker.C:
-				// 5s heartbeat - send current template
-				checkAndSendTemplate(true)
-			case <-rpcSub.Err():
-				return
-			case <-notifier.Closed():
 				return
 			}
 		}

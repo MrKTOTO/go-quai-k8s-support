@@ -210,10 +210,6 @@ func (b *testBackend) AddPendingAuxPow(powId types.PowID, sealHash common.Hash, 
 	// Implementation goes here
 }
 
-func (b *testBackend) GetPendingHeader(powID types.PowID, coinbase common.Address) (*types.WorkObject, error) {
-	return nil, nil
-}
-
 func (b *testBackend) RpcVersion() string {
 	return "v1"
 }

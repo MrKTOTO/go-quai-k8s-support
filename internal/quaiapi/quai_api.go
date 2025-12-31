@@ -1324,6 +1324,9 @@ func (s *PublicBlockChainQuaiAPI) marshalAuxPowTemplate(wo *types.WorkObject, re
 		targetHex = targetHex[2:]
 	}
 
+	// set the pendingheader time to empty
+	woCopy := types.CopyWorkObjectHeader(wo.WorkObjectHeader())
+	woCopy.SetTime(0)
 	sealHashString := hex.EncodeToString(wo.SealHash().Bytes()[:6])
 
 	extraNonce2Length := 8
