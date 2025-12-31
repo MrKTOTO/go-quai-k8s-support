@@ -1166,7 +1166,7 @@ func (api *PublicFilterAPI) BlockTemplateUpdates(ctx context.Context, crit Block
 			}
 
 			if changed || forceUpdate {
-				template, err := quaiapi.MarshalAuxPowTemplate(pending, powID, "", "", "")
+				template, err := quaiapi.MarshalAuxPowTemplate(pending, powID, "", "", "", 8)
 				if err != nil {
 					api.backend.Logger().WithField("err", err).Debug("Failed to marshal block template")
 					return
