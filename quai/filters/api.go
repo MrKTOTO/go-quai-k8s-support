@@ -1064,10 +1064,11 @@ type BlockTemplateUpdatesCriteria struct {
 
 // templateState tracks template changes for update detection
 type templateState struct {
-	sealHash   common.Hash
-	parentHash common.Hash
-	height     uint64
-	quaiHeight uint64
+	sealHash      common.Hash
+	parentHash    common.Hash
+	height        uint64
+	quaiHeight    uint64
+	signatureTime uint32
 }
 
 // parsePowID converts algorithm string to types.PowID
@@ -1141,12 +1142,20 @@ func (api *PublicFilterAPI) BlockTemplateUpdates(ctx context.Context, crit Block
 			if auxPow == nil || auxPow.Header() == nil {
 				return
 			}
+			signatureTime, err := types.ExtractSignatureTimeFromCoinbase(types.ExtractScriptSigFromCoinbaseTx(auxPow.Transaction()))
+			if err != nil {
+				api.backend.Logger().WithField("err", err).Debug("Failed to extract signature time from coinbase")
+				signatureTime = 0
+			}
+			pendingCopy := types.CopyWorkObjectHeader(pending.WorkObjectHeader())
+			pendingCopy.SetTime(0)
 
 			newState := &templateState{
-				sealHash:   pending.SealHash(),
-				parentHash: auxPow.Header().PrevBlock(),
-				height:     pending.NumberU64(common.ZONE_CTX),
-				quaiHeight: pending.WorkObjectHeader().NumberU64(),
+				sealHash:      pendingCopy.SealHash(),
+				parentHash:    auxPow.Header().PrevBlock(),
+				height:        pending.NumberU64(common.ZONE_CTX),
+				quaiHeight:    pending.WorkObjectHeader().NumberU64(),
+				signatureTime: signatureTime,
 			}
 
 			changed := false
@@ -1156,6 +1165,8 @@ func (api *PublicFilterAPI) BlockTemplateUpdates(ctx context.Context, crit Block
 				changed = true // New block
 			} else if lastState.quaiHeight != newState.quaiHeight {
 				changed = true // QuaiHeight changed
+			} else if lastState.signatureTime != newState.signatureTime {
+				changed = true // Signature time changed
 			} else if powID == types.Kawpow && lastState.sealHash != newState.sealHash {
 				changed = true // Kawpow: sealHash changed (epoch change)
 			}
@@ -1180,7 +1191,7 @@ func (api *PublicFilterAPI) BlockTemplateUpdates(ctx context.Context, crit Block
 			case <-pendingHeaders:
 				checkAndSendTemplate(false)
 			case <-heartbeatTicker.C:
-				// 5s heartbeat - send current template
+				// 15s heartbeat - send current template
 				checkAndSendTemplate(true)
 			case <-changingTicker.C:
 				// 5s heartbeat - send current template
