@@ -1118,7 +1118,7 @@ func (api *PublicFilterAPI) BlockTemplateUpdates(ctx context.Context, crit Block
 		api.activeSubscriptions += 1
 
 		var lastState *templateState
-		heartbeatTicker := time.NewTicker(15 * time.Second)
+		heartbeatTicker := time.NewTicker(4 * time.Second)
 		defer heartbeatTicker.Stop()
 		changingTicker := time.NewTicker(300 * time.Millisecond)
 		defer changingTicker.Stop()
@@ -1179,7 +1179,7 @@ func (api *PublicFilterAPI) BlockTemplateUpdates(ctx context.Context, crit Block
 				}
 				notifier.Notify(rpcSub.ID, template)
 				lastState = newState
-				heartbeatTicker.Reset(15 * time.Second)
+				heartbeatTicker.Reset(4 * time.Second)
 			}
 		}
 
