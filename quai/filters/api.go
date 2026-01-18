@@ -1167,7 +1167,8 @@ func (api *PublicFilterAPI) BlockTemplateUpdates(ctx context.Context, crit Block
 				changed = true // QuaiHeight changed
 				//} else if lastState.signatureTime != newState.signatureTime {
 				//	changed = true // Signature time changed
-			} else if powID == types.Kawpow && lastState.sealHash != newState.sealHash {
+				//} else if powID == types.Kawpow && lastState.sealHash != newState.sealHash {
+			} else if lastState.sealHash != newState.sealHash {
 				changed = true // Kawpow: sealHash changed (epoch change)
 			}
 
@@ -1177,6 +1178,7 @@ func (api *PublicFilterAPI) BlockTemplateUpdates(ctx context.Context, crit Block
 					api.backend.Logger().WithField("err", err).Debug("Failed to marshal block template")
 					return
 				}
+				template["tChanged"] = changed
 				notifier.Notify(rpcSub.ID, template)
 				lastState = newState
 				heartbeatTicker.Reset(4 * time.Second)
