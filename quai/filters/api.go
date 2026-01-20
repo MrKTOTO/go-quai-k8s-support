@@ -1183,6 +1183,7 @@ func (api *PublicFilterAPI) BlockTemplateUpdates(ctx context.Context, crit Block
 					return
 				}
 				template["tChanged"] = changed
+				template["sealHChanged"] = sealChanged
 				notifier.Notify(rpcSub.ID, template)
 				lastState = newState
 				heartbeatTicker.Reset(5 * time.Second)
