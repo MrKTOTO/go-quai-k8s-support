@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/common/hexutil"
@@ -2261,6 +2262,124 @@ func (s *PublicBlockChainQuaiAPI) GetCoinbaseTxForWorkShareHash(ctx context.Cont
 	return nil, errors.New("no coinbase transaction found for workshare hash")
 }
 
+// GetDonorChainInfoForWorkShare returns the donor chain PoW hash and difficulty info for a workshare.
+// This can be used to determine if a workshare is also a valid block on the donor chain (BCH, LTC, RVN).
+func (s *PublicBlockChainQuaiAPI) GetDonorChainInfoForWorkshare(ctx context.Context, workShareHash common.Hash) (map[string]interface{}, error) {
+	var workshare *types.WorkObjectHeader
+
+	// Helper function to find workshare in a block
+	findWorkshareInBlock := func(block *types.WorkObject) *types.WorkObjectHeader {
+		if block == nil {
+			return nil
+		}
+		// Check if the hash matches the block itself
+		if block.Hash() == workShareHash {
+			return block.WorkObjectHeader()
+		}
+		// Check the block's uncles/workshares
+		for _, uncle := range block.Uncles() {
+			if uncle.Hash() == workShareHash {
+				return uncle
+			}
+		}
+		return nil
+	}
+
+	// First try the direct lookup
+	block := s.b.GetBlockForWorkShareHash(workShareHash)
+	if block == nil {
+		return nil, errors.New("block not found for work share hash")
+	}
+	workshare = findWorkshareInBlock(block)
+
+	// If not found, search the last 20 blocks
+	if workshare == nil {
+		currentHeader := s.b.CurrentHeader()
+		if currentHeader != nil {
+			nodeCtx := s.b.NodeCtx()
+			currentNum := block.NumberU64(nodeCtx)
+			for i := uint64(0); i < 20 && currentNum >= i; i++ {
+				blockNum := currentNum - i
+				block, _ := s.b.BlockByNumber(ctx, rpc.BlockNumber(blockNum))
+				workshare = findWorkshareInBlock(block)
+				if workshare != nil {
+					break
+				}
+			}
+		}
+	}
+
+	if workshare == nil {
+		return nil, errors.New("workshare not found in recent blocks")
+	}
+
+	// Get AuxPow from the workshare
+	auxPow := workshare.AuxPow()
+	if auxPow == nil {
+		return nil, errors.New("workshare has no AuxPoW (Progpow workshare)")
+	}
+
+	// PowID to name mapping
+	powIdNames := map[types.PowID]string{
+		types.Progpow: "Progpow",
+		types.Kawpow:  "Kawpow",
+		types.SHA_BTC: "SHA_BTC",
+		types.SHA_BCH: "SHA_BCH",
+		types.Scrypt:  "Scrypt",
+	}
+
+	powID := auxPow.PowID()
+	auxPowBits := auxPow.Header().Bits()
+
+	// Get powHash - for SHA/Scrypt it's computed from header, for Kawpow we need the engine
+	var powHash common.Hash
+	if powID == types.Kawpow {
+		// For Kawpow, the powHash cannot be computed from the header alone.
+		// We need to use the consensus engine which has access to the DAG cache.
+		engine := s.b.Engine(workshare)
+		if computedHash, err := engine.ComputePowHash(workshare); err == nil {
+			powHash = computedHash
+		}
+		// If computation fails, powHash remains zero
+	} else {
+		// For SHA_BCH, SHA_BTC, Scrypt - powHash is computed directly from header
+		powHash = auxPow.Header().PowHash()
+	}
+
+	result := make(map[string]interface{})
+	result["powHash"] = powHash
+	result["powId"] = uint8(powID)
+	result["powIdName"] = powIdNames[powID]
+	result["bits"] = auxPowBits
+
+	// Calculate block difficulty percentage (blockTarget / powHash * 100)
+	// Values > 100 mean the hash beat the block target (could be a valid parent chain block)
+	// Values < 100 mean the hash didn't meet the target (e.g., 50% = halfway there)
+	if auxPowBits > 0 {
+		blockTarget := blockchain.CompactToBig(auxPowBits)
+		powHashInt := new(big.Int).SetBytes(powHash.Bytes())
+
+		result["blockTarget"] = (*hexutil.Big)(blockTarget)
+
+		if powHashInt.Sign() > 0 && blockTarget.Sign() > 0 {
+			// meetsBlockDifficulty: powHash <= blockTarget
+			meetsBlockDifficulty := powHashInt.Cmp(blockTarget) <= 0
+			result["meetsBlockDifficulty"] = meetsBlockDifficulty
+
+			// ratio = (blockTarget / powHash) * 100
+			ratio := new(big.Float).Quo(
+				new(big.Float).SetInt(blockTarget),
+				new(big.Float).SetInt(powHashInt),
+			)
+			ratio.Mul(ratio, big.NewFloat(100))
+			pct, _ := ratio.Float64()
+			result["difficultyPct"] = pct
+		}
+	}
+
+	return result, nil
+}
+
 func (s *PublicBlockChainQuaiAPI) GetSubsidyChainHeight(ctx context.Context) (map[string]interface{}, error) {
 	if !s.b.NodeLocation().Equal(common.Location{0, 0}) {
 		return nil, errors.New("cannot call GetSubsidyChainHeight in any other chain than cyprus-1")
@@ -2339,10 +2458,55 @@ func (s *PublicBlockChainQuaiAPI) GetMiningInfo(ctx context.Context, decimal *bo
 	var blockCount int64
 	var oldestBlockTime uint64
 
+	var startKawpowTime, endKawpowTime uint64
+	var startShaTime, endShaTime uint64
+	var startScryptTime, endScryptTime uint64
+
+	var totalKawpowShares, totalShaShares, totalScryptShares uint64
+
 	block := currentHeader
+
 	for block != nil && block.Time() > cutoffTime {
 		blockCount++
 		oldestBlockTime = block.Time()
+
+		if startKawpowTime == 0 || block.Time() <= startKawpowTime {
+			startKawpowTime = block.Time()
+		}
+		if endKawpowTime == 0 || block.Time() >= endKawpowTime {
+			endKawpowTime = block.Time()
+		}
+		totalKawpowShares++
+		for _, share := range block.Uncles() {
+			if share.AuxPow() != nil {
+				switch share.AuxPow().PowID() {
+				case types.Kawpow:
+					if startKawpowTime == 0 || share.Time() <= startKawpowTime {
+						startKawpowTime = share.Time()
+					}
+					if endKawpowTime == 0 || share.Time() >= endKawpowTime {
+						endKawpowTime = share.Time()
+					}
+					totalKawpowShares++
+				case types.SHA_BCH, types.SHA_BTC:
+					if startShaTime == 0 || share.Time() <= startShaTime {
+						startShaTime = share.Time()
+					}
+					if endShaTime == 0 || share.Time() >= endShaTime {
+						endShaTime = share.Time()
+					}
+					totalShaShares++
+				case types.Scrypt:
+					if startScryptTime == 0 || share.Time() <= startScryptTime {
+						startScryptTime = share.Time()
+					}
+					if endScryptTime == 0 || share.Time() >= endScryptTime {
+						endScryptTime = share.Time()
+					}
+					totalScryptShares++
+				}
+			}
+		}
 
 		// Get parent block
 		parentHash := block.ParentHash(common.ZONE_CTX)
@@ -2350,6 +2514,7 @@ func (s *PublicBlockChainQuaiAPI) GetMiningInfo(ctx context.Context, decimal *bo
 			break
 		}
 		block = s.b.GetBlockByHash(parentHash)
+
 	}
 
 	var avgBlockTime float64
@@ -2447,33 +2612,22 @@ func (s *PublicBlockChainQuaiAPI) GetMiningInfo(ctx context.Context, decimal *bo
 
 	// Hash rate = difficulty / average share time (hashes per second)
 	// Returns string to avoid float64 overflow with petahash-scale values
-	calcHashRate := func(diff *big.Int, avgTime float64) string {
-		if diff == nil || avgTime <= 0 {
+	calcHashRate := func(diff *big.Int, totalShares uint64, timeDiff int64) string {
+		if diff == nil || totalShares == 0 || timeDiff <= 0 {
 			return "0"
 		}
 		diffFloat := new(big.Float).SetInt(diff)
-		timeFloat := new(big.Float).SetFloat64(avgTime)
-		hashRate := new(big.Float).Quo(diffFloat, timeFloat)
+		totalDiff := new(big.Float).Mul(diffFloat, new(big.Float).SetUint64(totalShares))
+		timeFloat := new(big.Float).SetFloat64(float64(timeDiff))
+		hashRate := new(big.Float).Quo(totalDiff, timeFloat)
 		// Format as integer string (truncate decimals)
 		intPart, _ := hashRate.Int(nil)
 		return intPart.String()
 	}
 
-	if avgTime, ok := fields["avgKawpowShareTime"].(float64); ok {
-		fields["kawpowHashRate"] = calcHashRate(kawpowDiff, avgTime)
-	} else {
-		fields["kawpowHashRate"] = "0"
-	}
-	if avgTime, ok := fields["avgShaShareTime"].(float64); ok {
-		fields["shaHashRate"] = calcHashRate(shaDiff, avgTime)
-	} else {
-		fields["shaHashRate"] = "0"
-	}
-	if avgTime, ok := fields["avgScryptShareTime"].(float64); ok {
-		fields["scryptHashRate"] = calcHashRate(scryptDiff, avgTime)
-	} else {
-		fields["scryptHashRate"] = "0"
-	}
+	fields["kawpowHashRate"] = calcHashRate(kawpowDiff, totalKawpowShares, int64(endKawpowTime)-int64(startKawpowTime))
+	fields["shaHashRate"] = calcHashRate(shaDiff, totalShaShares, int64(endShaTime)-int64(startShaTime))
+	fields["scryptHashRate"] = calcHashRate(scryptDiff, totalScryptShares, int64(endScryptTime)-int64(startScryptTime))
 
 	// Include current block number and hash for reference
 	if decimal != nil && *decimal {
