@@ -1118,9 +1118,9 @@ func (api *PublicFilterAPI) BlockTemplateUpdates(ctx context.Context, crit Block
 		api.activeSubscriptions += 1
 
 		var lastState *templateState
-		heartbeatTicker := time.NewTicker(4 * time.Second)
+		heartbeatTicker := time.NewTicker(5 * time.Second)
 		defer heartbeatTicker.Stop()
-		changingTicker := time.NewTicker(300 * time.Millisecond)
+		changingTicker := time.NewTicker(150 * time.Millisecond)
 		defer changingTicker.Stop()
 
 		pendingHeaders := make(chan *types.WorkObject, c_pendingHeaderChSize)
@@ -1159,6 +1159,7 @@ func (api *PublicFilterAPI) BlockTemplateUpdates(ctx context.Context, crit Block
 			}
 
 			changed := false
+			sealChanged := false
 			if lastState == nil {
 				changed = true // First template
 			} else if lastState.parentHash != newState.parentHash {
@@ -1169,10 +1170,11 @@ func (api *PublicFilterAPI) BlockTemplateUpdates(ctx context.Context, crit Block
 				//	changed = true // Signature time changed
 				//} else if powID == types.Kawpow && lastState.sealHash != newState.sealHash {
 			} else if lastState.sealHash != newState.sealHash {
-				changed = true // Kawpow: sealHash changed (epoch change)
+				//changed = true // Kawpow: sealHash changed (epoch change)
+				sealChanged = true
 			}
 
-			if changed || forceUpdate {
+			if changed || forceUpdate || sealChanged {
 				template, err := quaiapi.MarshalAuxPowTemplate(pending, powID, "", "", "", 8)
 				if err != nil {
 					api.backend.Logger().WithField("err", err).Debug("Failed to marshal block template")
@@ -1181,7 +1183,7 @@ func (api *PublicFilterAPI) BlockTemplateUpdates(ctx context.Context, crit Block
 				template["tChanged"] = changed
 				notifier.Notify(rpcSub.ID, template)
 				lastState = newState
-				heartbeatTicker.Reset(4 * time.Second)
+				heartbeatTicker.Reset(5 * time.Second)
 			}
 		}
 
