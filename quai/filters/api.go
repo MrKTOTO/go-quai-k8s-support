@@ -1162,7 +1162,7 @@ func (api *PublicFilterAPI) BlockTemplateUpdates(ctx context.Context, crit Block
 				changed = true // New block
 			} else if lastState.quaiHeight != newState.quaiHeight {
 				changed = true // QuaiHeight changed
-			} else if powID == types.Kawpow && lastState.sealHash != newState.sealHash {
+			} else if lastState.sealHash != newState.sealHash {
 				sealChanged = true // Kawpow: sealHash changed (epoch change)
 			}
 
