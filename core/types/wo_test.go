@@ -333,6 +333,32 @@ func TestProtoDecode(t *testing.T) {
 	}
 }
 
+func TestWorkObjectHeaderProtoDecodeRejectsMissingMixHash(t *testing.T) {
+	wo, _ := woTestData()
+	protoHeader, err := wo.WorkObjectHeader().ProtoEncode()
+	require.NoError(t, err)
+	protoHeader.MixHash = nil
+
+	var decoded WorkObjectHeader
+	require.Error(t, decoded.ProtoDecode(protoHeader, common.Location{0, 0}))
+}
+
+func TestWorkObjectProtoDecodePEtxRejectsMissingBodyHeader(t *testing.T) {
+	wo, _ := woTestData()
+	protoWo, err := wo.ProtoEncode(PEtxObject)
+	require.NoError(t, err)
+	protoWo.WoBody.Header = nil
+
+	var decoded WorkObject
+	require.Error(t, decoded.ProtoDecode(protoWo, common.Location{0, 0}, PEtxObject))
+}
+
+func TestWorkObjectBodyProtoDecodeRejectsMissingBody(t *testing.T) {
+	var decoded WorkObjectBody
+	require.Error(t, decoded.ProtoDecode(nil, common.Location{0, 0}, BlockObject))
+	require.Error(t, decoded.ProtoDecodeHeader(nil, common.Location{0, 0}))
+}
+
 func TestCopyWorkObject(t *testing.T) {
 	originalWo, expectedHash := woTestData()
 

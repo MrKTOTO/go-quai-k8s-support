@@ -535,7 +535,7 @@ func (w *worker) asyncStateLoop() {
 						w.logger.WithFields(log.Fields{
 							"error":      r,
 							"stacktrace": string(debug.Stack()),
-						}).Fatal("Go-Quai Panicked")
+						}).Error("Go-Quai Panicked")
 					}
 				}()
 				for _, wo := range side.Blocks {
@@ -2793,6 +2793,9 @@ func (w *worker) processQiTx(tx *types.Transaction, env *environment, primeTermi
 	if tx.Type() != types.QiTxType {
 		return fmt.Errorf("tx %032x is not a QiTx", tx.Hash())
 	}
+	if len(tx.TxIn()) == 0 {
+		return errors.New("QiTx must have at least one input")
+	}
 	if types.IsCoinBaseTx(tx) {
 		return fmt.Errorf("tx %032x is a coinbase QiTx", tx.Hash())
 	}
@@ -2906,7 +2909,9 @@ func (w *worker) processQiTx(tx *types.Transaction, env *environment, primeTermi
 			totalConvertQitOut.Add(totalConvertQitOut, types.Denominations[txOut.Denomination]) // Uses the same path as conversion but takes priority
 			outputs[uint(txOut.Denomination)] -= 1                                              // This output no longer exists because it has been aggregated
 			delete(addresses, toAddr.Bytes20())
-			continue
+			if qiWrappingSkipsLocalUTXO(env.wo) {
+				continue
+			}
 		} else if toAddr.IsInQuaiLedgerScope() {
 			return fmt.Errorf("tx %032x emits UTXO with To address not in the Qi ledger scope", tx.Hash())
 		}

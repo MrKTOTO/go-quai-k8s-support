@@ -424,6 +424,9 @@ func CalculateKawpowShareDiff(header *types.WorkObjectHeader) *big.Int {
 	// If the quai hash rate reaches 75% of the ravencoin hash rate then we
 	// start applying a discount to the kawpow share target, linearly decreasing
 	// it until it reaches 0 at 90%
+	if header.KawpowDifficulty() == nil || header.KawpowDifficulty().Sign() <= 0 {
+		return header.Difficulty()
+	}
 	quaiDiffAsPercentOfRavencoin := new(big.Int).Div(new(big.Int).Mul(header.Difficulty(), params.RavencoinDiffPercentage), header.KawpowDifficulty())
 	if quaiDiffAsPercentOfRavencoin.Cmp(params.RavencoinDiffCutoffStart) >= 0 {
 		// At the 90% threshold, no kawpow shares are allowed
@@ -1341,6 +1344,9 @@ func (hc *HeaderChain) UncleWorkShareClassification(wo *types.WorkObjectHeader) 
 				return types.Block
 			}
 		case types.SHA_BCH, types.SHA_BTC:
+			if wo.ShaDiffAndCount() == nil || wo.ShaDiffAndCount().Difficulty() == nil || wo.ShaDiffAndCount().Difficulty().Sign() == 0 {
+				return types.Invalid
+			}
 			workShareTarget := new(big.Int).Div(common.Big2e256, wo.ShaDiffAndCount().Difficulty())
 			powHash := wo.AuxPow().Header().PowHash()
 			powHashBigInt := new(big.Int).SetBytes(powHash.Bytes())
@@ -1352,6 +1358,9 @@ func (hc *HeaderChain) UncleWorkShareClassification(wo *types.WorkObjectHeader) 
 
 		case types.Scrypt:
 
+			if wo.ScryptDiffAndCount() == nil || wo.ScryptDiffAndCount().Difficulty() == nil || wo.ScryptDiffAndCount().Difficulty().Sign() == 0 {
+				return types.Invalid
+			}
 			workShareTarget := new(big.Int).Div(common.Big2e256, wo.ScryptDiffAndCount().Difficulty())
 			powHash := wo.AuxPow().Header().PowHash()
 			powHashBigInt := new(big.Int).SetBytes(powHash.Bytes())

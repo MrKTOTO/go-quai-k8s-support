@@ -1070,8 +1070,13 @@ func (p *StateProcessor) Process(block *types.WorkObject, batch ethdb.Batch) (ty
 	if block.NumberU64(common.ZONE_CTX) <= params.TimeToStartTx && (etxAvailable && etxCount < minimumEtxCount || etxCount > maximumEtxCount) {
 		return nil, nil, nil, nil, 0, 0, 0, nil, nil, fmt.Errorf("total number of ETXs %d is not within the range %d to %d", etxCount, minimumEtxCount, maximumEtxCount)
 	}
-	if block.NumberU64(common.ZONE_CTX) > params.TimeToStartTx && (etxAvailable && totalEtxGas < minimumEtxGas) || totalEtxGas > maximumEtxGas {
-		p.logger.Errorf("prevInboundEtxs: %d, oldestIndex: %d, etxHash: %s", len(prevInboundEtxs), oldestIndex.Int64(), etx.Hash().Hex())
+	etxHash := "<nil>"
+	if etx != nil {
+		etxHash = etx.Hash().Hex()
+	}
+	if block.NumberU64(common.ZONE_CTX) > params.TimeToStartTx &&
+		((etxAvailable && totalEtxGas < minimumEtxGas) || totalEtxGas > maximumEtxGas) {
+		p.logger.Errorf("prevInboundEtxs: %d, oldestIndex: %d, etxHash: %s", len(prevInboundEtxs), oldestIndex.Int64(), etxHash)
 		return nil, nil, nil, nil, 0, 0, 0, nil, nil, fmt.Errorf("total gas used by ETXs %d is not within the range %d to %d", totalEtxGas, minimumEtxGas, maximumEtxGas)
 	}
 
@@ -1578,6 +1583,9 @@ func ValidateQiTxInputs(tx *types.Transaction, chain ChainContext, db ethdb.Read
 	if tx.Type() != types.QiTxType {
 		return nil, fmt.Errorf("tx %032x is not a QiTx", tx.Hash())
 	}
+	if len(tx.TxIn()) == 0 {
+		return nil, errors.New("QiTx must have at least one input")
+	}
 	if tx.ChainId().Cmp(signer.ChainID()) != 0 {
 		return nil, fmt.Errorf("tx %032x has wrong chain ID", tx.Hash())
 	}
@@ -1649,6 +1657,10 @@ func ValidateQiTxInputs(tx *types.Transaction, chain ChainContext, db ethdb.Read
 
 }
 
+func qiWrappingSkipsLocalUTXO(header *types.WorkObject) bool {
+	return header.PrimeTerminusNumber().Uint64() >= params.QiWrappingChangeBlock
+}
+
 func ValidateQiTxOutputsAndSignature(tx *types.Transaction, chain ChainContext, totalQitIn *big.Int, currentHeader *types.WorkObject, signer types.Signer, location common.Location, chainId big.Int, qiScalingFactor float64, etxRLimit, etxPLimit uint64) (*big.Int, error) {
 
 	intrinsicGas := types.CalculateIntrinsicQiTxGas(tx, qiScalingFactor)
@@ -1715,7 +1727,9 @@ func ValidateQiTxOutputsAndSignature(tx *types.Transaction, chain ChainContext, 
 			wrapping = true
 			totalConvertQitOut.Add(totalConvertQitOut, types.Denominations[txOut.Denomination]) // Uses the same path as conversion but takes priority
 			delete(addresses, toAddr.Bytes20())
-			continue
+			if qiWrappingSkipsLocalUTXO(currentHeader) {
+				continue
+			}
 		} else if toAddr.IsInQuaiLedgerScope() {
 			return nil, fmt.Errorf("tx [%v] emits UTXO with To address not in the Qi ledger scope", tx.Hash().Hex())
 		}
@@ -1839,6 +1853,9 @@ func ProcessQiTx(tx *types.Transaction, chain ChainContext, checkSig bool, isFir
 	if tx == nil || tx.Type() != types.QiTxType {
 		return nil, nil, nil, fmt.Errorf("tx %032x is not a QiTx", tx.Hash()), nil
 	}
+	if len(tx.TxIn()) == 0 {
+		return nil, nil, nil, errors.New("QiTx must have at least one input"), nil
+	}
 	if tx.ChainId().Cmp(&chainId) != 0 {
 		return nil, nil, nil, fmt.Errorf("tx %032x has invalid chain ID", tx.Hash()), nil
 	}
@@ -1958,6 +1975,9 @@ func ProcessQiTx(tx *types.Transaction, chain ChainContext, checkSig bool, isFir
 				types.MaxDenomination)
 			return nil, nil, nil, errors.New(str), nil
 		}
+		if txOut.Lock != nil && txOut.Lock.Sign() != 0 {
+			return nil, nil, nil, errors.New("QiTx output has non-zero lock"), nil
+		}
 		totalQitOut.Add(totalQitOut, types.Denominations[txOut.Denomination])
 
 		toAddr := common.BytesToAddress(txOut.Address, location)
@@ -1970,6 +1990,9 @@ func ProcessQiTx(tx *types.Transaction, chain ChainContext, checkSig bool, isFir
 		outputs[uint(txOut.Denomination)]++
 
 		if toAddr.Location().Equal(location) && toAddr.IsInQuaiLedgerScope() && len(tx.Data()) == params.MaxQiTxDataLength { // Qi->Quai conversion
+			if conversion && !toAddr.Equal(convertAddress) { // All convert outputs must have the same To address for aggregation
+				return nil, nil, nil, fmt.Errorf("tx %032x emits multiple convert UTXOs with different To addresses", tx.Hash()), nil
+			}
 			conversion = true
 			convertAddress = toAddr
 			totalConvertQitOut.Add(totalConvertQitOut, types.Denominations[txOut.Denomination]) // Add to total conversion output for aggregation
@@ -1986,7 +2009,7 @@ func ProcessQiTx(tx *types.Transaction, chain ChainContext, checkSig bool, isFir
 			totalConvertQitOut.Add(totalConvertQitOut, types.Denominations[txOut.Denomination]) // Uses the same path as conversion but takes priority
 			outputs[uint(txOut.Denomination)] -= 1                                              // This output no longer exists because it has been aggregated
 			delete(addresses, toAddr.Bytes20())
-			if currentHeader.PrimeTerminusNumber().Uint64() >= params.QiWrappingChangeBlock {
+			if qiWrappingSkipsLocalUTXO(currentHeader) {
 				continue
 			}
 		} else if toAddr.IsInQuaiLedgerScope() {

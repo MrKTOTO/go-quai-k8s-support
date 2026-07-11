@@ -724,7 +724,7 @@ func (sl *Slice) Append(header *types.WorkObject, domTerminus common.Hash, domOr
 					sl.logger.WithFields(log.Fields{
 						"error":      r,
 						"stacktrace": string(debug.Stack()),
-					}).Fatal("Go-Quai Panicked")
+					}).Error("Go-Quai Panicked")
 				}
 			}()
 			sl.hc.chainSideFeed.Send(ChainSideEvent{Blocks: []*types.WorkObject{block}})
@@ -814,7 +814,7 @@ func (sl *Slice) Append(header *types.WorkObject, domTerminus common.Hash, domOr
 		quaiDiffAsPercentOfRavencoinInstantaneous = new(big.Int).Div(new(big.Int).Mul(header.Difficulty(), params.RavencoinDiffPercentage), subsidyChainDiff)
 	}
 
-	if header.KawpowDifficulty() != nil {
+	if header.KawpowDifficulty() != nil && header.KawpowDifficulty().Sign() > 0 {
 		quaiDiffAsPercentOfRavencoin = new(big.Int).Div(new(big.Int).Mul(header.Difficulty(), params.RavencoinDiffPercentage), header.KawpowDifficulty())
 	}
 
@@ -2452,8 +2452,14 @@ func (sl *Slice) ReceiveWorkShare(workShare *types.WorkObjectHeader) (shareView 
 
 				var workShareTarget *big.Int
 				if workShare.AuxPow().PowID() == types.Scrypt {
+					if workShare.ScryptDiffAndCount() == nil || workShare.ScryptDiffAndCount().Difficulty() == nil || workShare.ScryptDiffAndCount().Difficulty().Sign() == 0 {
+						return nil, false, false, errors.New("workshare has invalid scrypt difficulty")
+					}
 					workShareTarget = new(big.Int).Div(common.Big2e256, workShare.ScryptDiffAndCount().Difficulty())
 				} else {
+					if workShare.ShaDiffAndCount() == nil || workShare.ShaDiffAndCount().Difficulty() == nil || workShare.ShaDiffAndCount().Difficulty().Sign() == 0 {
+						return nil, false, false, errors.New("workshare has invalid sha difficulty")
+					}
 					workShareTarget = new(big.Int).Div(common.Big2e256, workShare.ShaDiffAndCount().Difficulty())
 				}
 				powHash := workShare.AuxPow().Header().PowHash()

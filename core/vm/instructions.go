@@ -867,8 +867,15 @@ func opSuicide(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]
 	}
 	balance := interpreter.evm.StateDB.GetBalance(addr)
 	interpreter.evm.StateDB.AddBalance(beneficiaryAddr, balance)
-	refund := new(big.Int).Mul(interpreter.evm.Context.BaseFee, new(big.Int).SetUint64(params.CallNewAccountGas(interpreter.evm.Context.QuaiStateSize)))
-	interpreter.evm.StateDB.AddBalance(beneficiaryAddr, refund)
+	// State-rent refund credited to the beneficiary on SELFDESTRUCT.
+	// At/after the fork the refund is granted at most once per account: it is
+	// skipped if the account was already self-destructed earlier in this
+	// transaction, mirroring how the balance transfer self-nullifies once Suicide
+	// has zeroed the balance. Pre-fork behavior is preserved for replay.
+	if interpreter.evm.Context.PrimeTerminusNumber < params.SelfDestructRefundForkBlock || !interpreter.evm.StateDB.HasSuicided(addr) {
+		refund := new(big.Int).Mul(interpreter.evm.Context.BaseFee, new(big.Int).SetUint64(params.CallNewAccountGas(interpreter.evm.Context.QuaiStateSize)))
+		interpreter.evm.StateDB.AddBalance(beneficiaryAddr, refund)
+	}
 	interpreter.evm.StateDB.Suicide(addr)
 	return nil, nil
 }
@@ -900,10 +907,47 @@ func opETX(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]byte
 	}
 
 	fee := uint256.NewInt(0)
-	fee.Add(&gasTipCap, &gasFeeCap)
-	fee.Mul(fee, &etxGasLimit)
 	total := uint256.NewInt(0)
-	total.Add(&value, fee)
+	etxGasLimit64 := uint64(0)
+	if interpreter.evm.Context.PrimeTerminusNumber >= params.SelfDestructRefundForkBlock {
+		if etxGasLimit.CmpUint64(math.MaxUint64) == 1 {
+			temp.Clear()
+			stack.push(&temp)
+			log.Global.Errorf("%x opETX error: gas limit %d is greater than maximum %d\n", scope.Contract.self.Address(), etxGasLimit, uint64(math.MaxUint64))
+			return nil, nil
+		}
+		etxGasLimit64 = etxGasLimit.Uint64()
+
+		if etxGasLimit64 < params.TxGas {
+			temp.Clear()
+			stack.push(&temp)
+			log.Global.Errorf("%x opETX error: gas limit %d is less than minimum %d\n", scope.Contract.self.Address(), etxGasLimit, params.TxGas)
+			return nil, nil
+		}
+
+		if _, overflow := fee.AddOverflow(&gasTipCap, &gasFeeCap); overflow {
+			temp.Clear()
+			stack.push(&temp)
+			log.Global.Errorf("%x opETX overflow error: gas fee cap plus tip cap overflows uint256\n", scope.Contract.self.Address())
+			return nil, nil
+		}
+		if _, overflow := fee.MulOverflow(fee, &etxGasLimit); overflow {
+			temp.Clear()
+			stack.push(&temp)
+			log.Global.Errorf("%x opETX overflow error: fee times gas limit overflows uint256\n", scope.Contract.self.Address())
+			return nil, nil
+		}
+		if _, overflow := total.AddOverflow(&value, fee); overflow {
+			temp.Clear()
+			stack.push(&temp)
+			log.Global.Errorf("%x opETX overflow error: value plus fee overflows uint256\n", scope.Contract.self.Address())
+			return nil, nil
+		}
+	} else {
+		fee.Add(&gasTipCap, &gasFeeCap)
+		fee.Mul(fee, &etxGasLimit)
+		total.Add(&value, fee)
+	}
 	// Fail if we're trying to transfer more than the available balance
 	if total.Sign() == 0 || !interpreter.evm.Context.CanTransfer(interpreter.evm.StateDB, scope.Contract.self.Address(), total.ToBig()) {
 		temp.Clear()
@@ -912,19 +956,22 @@ func opETX(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]byte
 		return nil, nil
 	}
 
-	if etxGasLimit.CmpUint64(math.MaxUint64) == 1 {
-		temp.Clear()
-		stack.push(&temp)
-		log.Global.Errorf("%x opETX error: gas limit %d is greater than maximum %d\n", scope.Contract.self.Address(), etxGasLimit, math.MaxInt64)
-		return nil, nil
-	}
+	if interpreter.evm.Context.PrimeTerminusNumber < params.SelfDestructRefundForkBlock {
+		if etxGasLimit.CmpUint64(math.MaxUint64) == 1 {
+			temp.Clear()
+			stack.push(&temp)
+			log.Global.Errorf("%x opETX error: gas limit %d is greater than maximum %d\n", scope.Contract.self.Address(), etxGasLimit, math.MaxInt64)
+			return nil, nil
+		}
 
-	// Overflow not a problem here as overflow guarantees a number larger than txgas
-	if etxGasLimit.Uint64() < params.TxGas {
-		temp.Clear()
-		stack.push(&temp)
-		log.Global.Errorf("%x opETX error: gas limit %d is less than minimum %d\n", scope.Contract.self.Address(), etxGasLimit, params.TxGas)
-		return nil, nil
+		// Overflow not a problem here as overflow guarantees a number larger than txgas.
+		if etxGasLimit.Uint64() < params.TxGas {
+			temp.Clear()
+			stack.push(&temp)
+			log.Global.Errorf("%x opETX error: gas limit %d is less than minimum %d\n", scope.Contract.self.Address(), etxGasLimit, params.TxGas)
+			return nil, nil
+		}
+		etxGasLimit64 = etxGasLimit.Uint64()
 	}
 
 	interpreter.evm.StateDB.SubBalance(internalSender, total.ToBig())
@@ -953,7 +1000,7 @@ func opETX(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]byte
 	}
 
 	// create external transaction
-	etxInner := types.ExternalTx{Value: value.ToBig(), To: &toAddr, Sender: sender, OriginatingTxHash: interpreter.evm.Hash, EtxType: types.DefaultType, ETXIndex: uint16(index), Gas: etxGasLimit.Uint64(), Data: data, AccessList: accessList}
+	etxInner := types.ExternalTx{Value: value.ToBig(), To: &toAddr, Sender: sender, OriginatingTxHash: interpreter.evm.Hash, EtxType: types.DefaultType, ETXIndex: uint16(index), Gas: etxGasLimit64, Data: data, AccessList: accessList}
 	etx := types.NewTx(&etxInner)
 
 	// check if the etx is eligible to be sent to the to location
@@ -1028,10 +1075,48 @@ func opConvert(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]
 	}
 
 	fee := uint256.NewInt(0)
-	gasPrice, _ := uint256.FromBig(interpreter.evm.GasPrice)
-	fee.Mul(gasPrice, &etxGasLimit) // optional: add gasPrice (base fee) and gasTipCap
 	total := uint256.NewInt(0)
-	total.Add(&uint256Value, fee)
+	etxGasLimit64 := uint64(0)
+	if interpreter.evm.Context.PrimeTerminusNumber >= params.SelfDestructRefundForkBlock {
+		if etxGasLimit.CmpUint64(math.MaxUint64) == 1 {
+			temp.Clear()
+			stack.push(&temp)
+			log.Global.Errorf("%x opConvert error: gas limit %d is greater than maximum %d\n", scope.Contract.self.Address(), etxGasLimit, uint64(math.MaxUint64))
+			return nil, nil
+		}
+		etxGasLimit64 = etxGasLimit.Uint64()
+
+		if etxGasLimit64 < params.TxGas {
+			temp.Clear()
+			stack.push(&temp)
+			log.Global.Errorf("%x opConvert error: gas limit %d is less than minimum %d\n", scope.Contract.self.Address(), etxGasLimit, params.TxGas)
+			return nil, nil
+		}
+
+		gasPrice, overflow := uint256.FromBig(interpreter.evm.GasPrice)
+		if overflow {
+			temp.Clear()
+			stack.push(&temp)
+			log.Global.Errorf("%x opConvert overflow error: gas price exceeds uint256\n", scope.Contract.self.Address())
+			return nil, nil
+		}
+		if _, overflow := fee.MulOverflow(gasPrice, &etxGasLimit); overflow {
+			temp.Clear()
+			stack.push(&temp)
+			log.Global.Errorf("%x opConvert overflow error: gas price times gas limit overflows uint256\n", scope.Contract.self.Address())
+			return nil, nil
+		}
+		if _, overflow := total.AddOverflow(&uint256Value, fee); overflow {
+			temp.Clear()
+			stack.push(&temp)
+			log.Global.Errorf("%x opConvert overflow error: value plus fee overflows uint256\n", scope.Contract.self.Address())
+			return nil, nil
+		}
+	} else {
+		gasPrice, _ := uint256.FromBig(interpreter.evm.GasPrice)
+		fee.Mul(gasPrice, &etxGasLimit) // optional: add gasPrice (base fee) and gasTipCap
+		total.Add(&uint256Value, fee)
+	}
 	// Fail if we're trying to transfer more than the available balance
 	if total.Sign() == 0 || !interpreter.evm.Context.CanTransfer(interpreter.evm.StateDB, scope.Contract.self.Address(), total.ToBig()) {
 		temp.Clear()
@@ -1040,12 +1125,15 @@ func opConvert(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]
 		return nil, nil
 	}
 
-	// Overflow not a problem here as overflow guarantees a number larger than txgas
-	if etxGasLimit.Uint64() < params.TxGas {
-		temp.Clear()
-		stack.push(&temp)
-		log.Global.Errorf("%x opConvert error: gas limit %d is less than minimum %d\n", scope.Contract.self.Address(), etxGasLimit, params.TxGas)
-		return nil, nil
+	if interpreter.evm.Context.PrimeTerminusNumber < params.SelfDestructRefundForkBlock {
+		// Overflow not a problem here as overflow guarantees a number larger than txgas.
+		if etxGasLimit.Uint64() < params.TxGas {
+			temp.Clear()
+			stack.push(&temp)
+			log.Global.Errorf("%x opConvert error: gas limit %d is less than minimum %d\n", scope.Contract.self.Address(), etxGasLimit, params.TxGas)
+			return nil, nil
+		}
+		etxGasLimit64 = etxGasLimit.Uint64()
 	}
 
 	interpreter.evm.StateDB.SubBalance(internalSender, total.ToBig())
@@ -1061,7 +1149,7 @@ func opConvert(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]
 	}
 
 	// create external transaction
-	etxInner := types.ExternalTx{Value: bigValue, To: &toAddr, Sender: sender, EtxType: types.ConversionType, OriginatingTxHash: interpreter.evm.Hash, ETXIndex: uint16(index), Gas: etxGasLimit.Uint64()}
+	etxInner := types.ExternalTx{Value: bigValue, To: &toAddr, Sender: sender, EtxType: types.ConversionType, OriginatingTxHash: interpreter.evm.Hash, ETXIndex: uint16(index), Gas: etxGasLimit64}
 	etx := types.NewTx(&etxInner)
 
 	interpreter.evm.ETXCacheLock.Lock()
